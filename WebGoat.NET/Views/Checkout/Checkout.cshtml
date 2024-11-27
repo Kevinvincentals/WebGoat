@@ -2,6 +2,8 @@
 
 @{
     ViewData["Title"] = "Checkout";
+    const decimal dkkRate = 7.5m;
+    const decimal standardShipping = 20.0m;
 }
 
 <h1>
@@ -12,13 +14,17 @@
 {
     <partial name="_CartPartial" model=@Model.Cart/>
 }
-@using (Html.BeginForm(FormMethod.Post))
+@using (Html.BeginForm(FormMethod.Post, new { id = "payment-form" }))
 {
     <fieldset title="Where shall we ship this?">
         <legend>Where shall we ship this?</legend>
         @Html.LabelFor(m => m.ShipTarget)
         @Html.TextBoxFor(m => m.ShipTarget, new { @maxlength = 40 })
         @Html.ValidationMessageFor(m => m.ShipTarget)
+        <br>
+        @Html.LabelFor(m => m.Email)
+        @Html.TextBoxFor(m => m.Email, new { @maxlength = 100 })
+        @Html.ValidationMessageFor(m => m.Email)
         <br>
         @Html.LabelFor(m => m.Address)
         @Html.TextBoxFor(m => m.Address, new { @maxlength = 60 })
@@ -40,54 +46,94 @@
         @Html.TextBoxFor(m => m.Country, new { @maxlength = 15 })
         @Html.ValidationMessageFor(m => m.Country)
     </fieldset>
-    <fieldset>
-        <legend>How shall we ship it?</legend>
-        @Html.LabelFor(m => m.ShippingMethod)
-        <br>
-        <select asp-for="ShippingMethod" class="textEntry">
-            @foreach(var (shipperId, shippement) in Model.ShippingOptions)
-            {
-                <option value=@shipperId>@shippement</option>
-            }
-        </select>
-        @Html.ValidationMessageFor(m => m.ShippingMethod)
-    </fieldset>
-    <fieldset>
-        <legend>How would you like to pay for it?</legend>
-        @Html.LabelFor(m => m.CreditCard)
-        <br>
-        @Html.TextBoxFor(m => m.CreditCard, new { @maxlength = 20 })
-        @Html.ValidationMessageFor(m => m.CreditCard)
-        <br>
-        @Html.LabelFor(m => m.ExpirationMonth)
-        <select asp-for="ExpirationMonth">
-            <option selected="selected" value="01">January</option>
-            <option value="02">February</option>
-            <option value="03">March</option>
-            <option value="04">April</option>
-            <option value="05">May</option>
-            <option value="06">June</option>
-            <option value="07">July</option>
-            <option value="08">August</option>
-            <option value="09">September</option>
-            <option value="10">October</option>
-            <option value="11">November</option>
-            <option value="12">December</option>
-        </select>
-        @Html.ValidationMessageFor(m => m.ExpirationMonth)
-    <select asp-for="ExpirationYear">
-        @foreach (var year in Model.AvailableExpirationYears)
+    <div class="price-summary">
+        <h3>Price Summary (DKK)</h3>
+        @if (Model.Cart?.OrderDetails != null)
         {
-            <option value=@year>@year</option>
+            @foreach (var item in Model.Cart.OrderDetails.Values)
+            {
+                <div class="item-price">
+                    <span>@item.Product.ProductName</span>
+                    <span>@((Convert.ToDecimal(item.UnitPrice) * dkkRate).ToString("F2")) kr.</span>
+                </div>
+            }
+            
+            <div class="shipping-cost">
+                <span>Standard Shipping</span>
+                <span>@((standardShipping * dkkRate).ToString("F2")) kr.</span>
+            </div>
+            
+            <div class="total-price">
+                <strong>Total</strong>
+                <strong>@((Convert.ToDecimal(Model.Cart.SubTotal + standardShipping) * dkkRate).ToString("F2")) kr.</strong>
+            </div>
         }
-    </select>
-        @Html.ValidationMessageFor(m => m.ExpirationYear)
-        <br>
-        <span title="Store credit card number?">
-            @Html.CheckBoxFor(m => m.RememberCreditCard)
-            @Html.LabelFor(m => m.RememberCreditCard)
-        </span>
-        <div>Example credit card numbers: 4111 1111 1111 1111, 5500 0000 0000 0004, 3400 0000 0000 009</div>
-    </fieldset>
-    <input type="submit" value="Place Order">
+    </div>
+    <button type="submit" id="checkout-button" class="btn btn-primary">
+        Proceed to Payment
+    </button>
+}
+
+@section Scripts {
+    <script src="https://js.stripe.com/v3/"></script>
+    <script>
+        const stripe = Stripe('@ViewData["StripePublicKey"]');
+        const form = document.getElementById('payment-form');
+        
+        form.addEventListener('submit', async function(event) {
+            event.preventDefault();
+            
+            // Create an object from form data
+            const formData = Array.from(new FormData(form)).reduce((acc, [key, value]) => {
+                acc[key] = value;
+                return acc;
+            }, {});
+            
+            // Log the data being sent
+            console.log('Sending data:', formData);
+            
+            try {
+                const response = await fetch('/Checkout/Checkout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        shipTarget: formData.ShipTarget,
+                        email: formData.Email,
+                        address: formData.Address,
+                        city: formData.City,
+                        region: formData.Region,
+                        postalCode: formData.PostalCode,
+                        country: formData.Country
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Server error:', errorData);
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log('Response:', data);
+                
+                if (data.error) {
+                    console.error('Error:', data.error);
+                    return;
+                }
+                
+                // Redirect to Stripe Checkout
+                const result = await stripe.redirectToCheckout({
+                    sessionId: data.sessionId
+                });
+                
+                if (result.error) {
+                    console.error('Stripe error:', result.error);
+                }
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+    </script>
 }

@@ -1,83 +1,37 @@
 ﻿using WebGoatCore.Models;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 
 #pragma warning disable CS8618 // Non-nullable field is uninitialized. Consider declaring as nullable.
 namespace WebGoatCore.ViewModels
 {
     public class CheckoutViewModel
     {
+        [Required(ErrorMessage = "Please enter a name to ship to")]
         [Display(Name = "Name to ship to")]
-        [Required(ErrorMessage = "Please enter the name")]
-        public string ShipTarget { get; set; }
+        public string ShipTarget { get; set; } = string.Empty;
 
-        [Display(Name = "Address")]
-        [Required(ErrorMessage = "Please enter address")]
-        public string Address { get; set; }
+        [Required(ErrorMessage = "Email is required")]
+        [EmailAddress(ErrorMessage = "Please enter a valid email address")]
+        public string Email { get; set; } = string.Empty;
 
-        [Display(Name = "City")]
-        [Required(ErrorMessage = "Please enter city")]
-        public string City { get; set; }
+        [Required(ErrorMessage = "Address is required")]
+        public string Address { get; set; } = string.Empty;
 
+        [Required(ErrorMessage = "City is required")]
+        public string City { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "Region/State is required")]
         [Display(Name = "Region/State")]
-        [Required(ErrorMessage = "Please enter region/state")]
-        public string Region { get; set; }
+        public string Region { get; set; } = string.Empty;
 
+        [Required(ErrorMessage = "Postal Code is required")]
         [Display(Name = "Postal Code")]
-        [DataType(DataType.PostalCode)]
-        [Required(ErrorMessage = "Please enter postal code")]
-        public string PostalCode { get; set; }
+        public string PostalCode { get; set; } = string.Empty;
 
-        [Display(Name = "Country")]
-        [Required(ErrorMessage = "Please enter country")]
-        public string Country { get; set; }
-
-        [Display(Name = "Shipping method")]
-        [Required(ErrorMessage = "Please enter country")]
-        public int ShippingMethod { get; set; }
-
-        [Display(Name = "Credit card number:")]
-        [DataType(DataType.CreditCard, ErrorMessage = "This doesn't look like credit card number")]
-        [Required(ErrorMessage = "Please provide valid card number.")]
-        public string CreditCard { get; set; }
-
-        [Display(Name = "Expiration")]
-        [Required(ErrorMessage = "Please enter expiration month")]
-        public int ExpirationMonth { get; set; }
-
-        [Required(ErrorMessage = "Please enter expiration year")]
-        public int ExpirationYear { get; set; }
-
-        [Display(Name = "Remember this credit card number for next time I check out.")]
-        [Required(ErrorMessage = "Please mark whether credit card number should be remembered")]
-        public bool RememberCreditCard { get; set; }
-
-        private static IDictionary<int, string> _shippingOptions;
-        public IDictionary<int, string> ShippingOptions {
-            get
-            {
-                return _shippingOptions;
-            }
-
-            set
-            {
-                _shippingOptions = value;
-            }
-        }
-
-        private static IList<int> _expYears;
-        public IList<int> AvailableExpirationYears
-        {
-            get
-            {
-                return _expYears;
-            }
-
-            set
-            {
-                _expYears = value;
-            }
-        }
+        [Required(ErrorMessage = "Country is required")]
+        public string Country { get; set; } = string.Empty;
 
         public Cart? Cart { get; set; }
     }

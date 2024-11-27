@@ -10,6 +10,11 @@ using System.Linq;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using WebGoatCore.Exceptions;
+using Stripe;
+using Stripe.Checkout;
+using System.Threading.Tasks;
+using System.Collections.Generic;
+using WebGoatCustomer = WebGoatCore.Models.Customer;
 
 namespace WebGoatCore.Controllers
 {
@@ -20,142 +25,159 @@ namespace WebGoatCore.Controllers
         private readonly ShipperRepository _shipperRepository;
         private readonly OrderRepository _orderRepository;
         private CheckoutViewModel? _model;
-        private string _resourcePath;
+        private readonly IConfiguration _configuration;
+        private readonly string _stripePublicKey;
+        private readonly string _stripeSecretKey;
 
-        public CheckoutController(UserManager<IdentityUser> userManager, CustomerRepository customerRepository, IHostEnvironment hostEnvironment, IConfiguration configuration, ShipperRepository shipperRepository, OrderRepository orderRepository)
+        public CheckoutController(
+            UserManager<IdentityUser> userManager, 
+            CustomerRepository customerRepository,
+            IHostEnvironment hostEnvironment,
+            IConfiguration configuration,
+            ShipperRepository shipperRepository,
+            OrderRepository orderRepository)
         {
             _userManager = userManager;
             _customerRepository = customerRepository;
             _shipperRepository = shipperRepository;
             _orderRepository = orderRepository;
-            _resourcePath = configuration.GetValue(Constants.WEBGOAT_ROOT, hostEnvironment.ContentRootPath);
+            _configuration = configuration;
+            
+            // Read from environment variables
+            _stripePublicKey = Environment.GetEnvironmentVariable("STRIPE_PUBLIC_KEY") 
+                ?? throw new InvalidOperationException("Stripe public key not configured");
+            _stripeSecretKey = Environment.GetEnvironmentVariable("STRIPE_SECRET_KEY") 
+                ?? throw new InvalidOperationException("Stripe secret key not configured");
+            
+            StripeConfiguration.ApiKey = _stripeSecretKey;
         }
 
         [HttpGet]
         public IActionResult Checkout()
         {
+            var cart = HttpContext.Session.Get<Cart>("Cart");
+            if (cart == null)
+            {
+                return RedirectToAction("Index", "Home");
+            }
+
             if(_model == null)
             {
                 InitializeModel();
             }
 
+            _model.Cart = cart;
+
+            ViewData["StripePublicKey"] = _stripePublicKey;
             return View(_model);
         }
 
         private void InitializeModel()
         {
-            _model = new CheckoutViewModel();
-
-            _model.Cart = HttpContext.Session.Get<Cart>("Cart");
-            _model.AvailableExpirationYears = Enumerable.Range(1, 5).Select(i => DateTime.Now.Year + i).ToList();
-            _model.ShippingOptions = _shipperRepository.GetShippingOptions(_model.Cart?.SubTotal ?? 0);
-
-            if (_model.Cart == null || _model.Cart.OrderDetails.Count == 0)
-            {
-                ModelState.AddModelError(string.Empty, "You have no items in your cart.");
-            }
-
             var customer = GetCustomerOrAddError();
-            if (customer != null)
+            if (customer == null)
             {
-                var creditCard = GetCreditCardForUser();
-
-                creditCard.GetCardForUser();
-                _model.CreditCard = creditCard.Number;
-                _model.ExpirationMonth = creditCard.Expiry.Month;
-                _model.ExpirationYear = creditCard.Expiry.Year;
-
-                _model.ShipTarget = customer.CompanyName;
-                _model.Address = customer.Address ?? string.Empty;
-                _model.City = customer.City ?? string.Empty;
-                _model.Region = customer.Region ?? string.Empty;
-                _model.PostalCode = customer.PostalCode ?? string.Empty;
-                _model.Country = customer.Country ?? string.Empty;
+                return;
             }
+
+            _model = new CheckoutViewModel
+            {
+                ShipTarget = customer.ContactName ?? string.Empty,
+                Address = customer.Address ?? string.Empty,
+                City = customer.City ?? string.Empty,
+                Region = customer.Region ?? string.Empty,
+                PostalCode = customer.PostalCode ?? string.Empty,
+                Country = customer.Country ?? string.Empty,
+                Cart = HttpContext.Session.Get<Cart>("Cart")!
+            };
         }
 
         [HttpPost]
-        public IActionResult Checkout(CheckoutViewModel model)
+        public async Task<IActionResult> Checkout([FromBody]CheckoutViewModel model)
         {
-            model.Cart = HttpContext.Session.Get<Cart>("Cart")!;
-
-            var customer = GetCustomerOrAddError();
-            if(customer == null)
+            if (!ModelState.IsValid)
             {
-                return View(model);
+                return BadRequest(new { error = ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage) });
             }
 
-            var creditCard = GetCreditCardForUser();
-            try
+            try 
             {
-                creditCard.GetCardForUser();
+                model.Cart = HttpContext.Session.Get<Cart>("Cart")!;
+                
+                if (model.Cart == null)
+                {
+                    return BadRequest(new { error = "Cart is empty" });
+                }
+
+                const decimal dkkRate = 7.5m;
+                const decimal standardShipping = 20.0m;
+                var subtotal = Convert.ToDecimal(model.Cart.SubTotal);
+                
+                var options = new SessionCreateOptions
+                {
+                    PaymentMethodTypes = new List<string> { "card" },
+                    LineItems = new List<SessionLineItemOptions>
+                    {
+                        new SessionLineItemOptions
+                        {
+                            PriceData = new SessionLineItemPriceDataOptions
+                            {
+                                UnitAmount = (long)((subtotal * dkkRate) * 100m),
+                                Currency = "dkk",
+                                ProductData = new SessionLineItemPriceDataProductDataOptions
+                                {
+                                    Name = "Cart Items",
+                                },
+                            },
+                            Quantity = 1,
+                        },
+                        new SessionLineItemOptions
+                        {
+                            PriceData = new SessionLineItemPriceDataOptions
+                            {
+                                UnitAmount = (long)((standardShipping * dkkRate) * 100m),
+                                Currency = "dkk",
+                                ProductData = new SessionLineItemPriceDataProductDataOptions
+                                {
+                                    Name = "Standard Shipping",
+                                },
+                            },
+                            Quantity = 1,
+                        }
+                    },
+                    Mode = "payment",
+                    SuccessUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeSuccess?session_id={{CHECKOUT_SESSION_ID}}",
+                    CancelUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeCancel",
+                    CustomerEmail = model.Email
+                };
+
+                var service = new SessionService();
+                var session = await service.CreateAsync(options);
+
+                return Json(new { sessionId = session.Id });
             }
-            catch (WebGoatCreditCardNotFoundException)
+            catch (Exception e)
             {
+                return BadRequest(new { error = e.Message });
             }
+        }
 
-            //Get form of payment
-            //If form specified card number, try to use it instead one stored for user
-            if (model.CreditCard != null && model.CreditCard.Length >= 13)
-            {
-                creditCard.Number = model.CreditCard;
-                creditCard.Expiry = new DateTime(model.ExpirationYear, model.ExpirationMonth, 1);
-            }
-            else
-            {
-                ModelState.AddModelError(string.Empty, "The card number specified is too short.");
-                _model = model;
-                return View(_model);
-            }
+        [HttpGet]
+        public async Task<IActionResult> StripeSuccess(string session_id)
+        {
+            var sessionService = new SessionService();
+            var session = await sessionService.GetAsync(session_id);
 
-            //Authorize payment through our bank or Authorize.net or someone.
-            if (!creditCard.IsValid())
-            {
-                ModelState.AddModelError(string.Empty, "That card is not valid. Please enter a valid card.");
-                _model = model;
-                return View(_model);
-            }
+            // Create order from session data
+            // ... implement order creation logic ...
 
-            if (model.RememberCreditCard)
-            {
-                creditCard.SaveCardForUser();
-            }
-
-            var order = new Order
-            {
-                ShipVia = model.ShippingMethod,
-                ShipName = model.ShipTarget,
-                ShipAddress = model.Address,
-                ShipCity = model.City,
-                ShipRegion = model.Region,
-                ShipPostalCode = model.PostalCode,
-                ShipCountry = model.Country,
-                OrderDetails = model.Cart.OrderDetails.Values.ToList(),
-                CustomerId = customer.CustomerId,
-                OrderDate = DateTime.Now,
-                RequiredDate = DateTime.Now.AddDays(7),
-                Freight = Math.Round(_shipperRepository.GetShipperByShipperId(model.ShippingMethod).GetShippingCost(model.Cart.SubTotal), 2),
-                EmployeeId = 1,
-            };
-
-            var approvalCode = creditCard.ChargeCard(order.Total);
-
-            order.Shipment = new Shipment()
-            {
-                ShipmentDate = DateTime.Today.AddDays(1),
-                ShipperId = order.ShipVia,
-                TrackingNumber = _shipperRepository.GetNextTrackingNumber(_shipperRepository.GetShipperByShipperId(order.ShipVia)),
-            };
-
-            //Create the order itself.
-            var orderId = _orderRepository.CreateOrder(order);
-
-            //Create the payment record.
-            _orderRepository.CreateOrderPayment(orderId, order.Total, creditCard.Number, creditCard.Expiry, approvalCode);
-
-            HttpContext.Session.SetInt32("OrderId", orderId);
-            HttpContext.Session.Remove("Cart");
             return RedirectToAction("Receipt");
+        }
+
+        [HttpGet]
+        public IActionResult StripeCancel()
+        {
+            return RedirectToAction("Checkout");
         }
 
         public IActionResult Receipt(int? id)
@@ -219,7 +241,7 @@ namespace WebGoatCore.Controllers
             return Redirect(Order.GetPackageTrackingUrl(carrier, trackingNumber));
         }
 
-        private Customer? GetCustomerOrAddError()
+        private WebGoatCustomer? GetCustomerOrAddError()
         {
             var username = _userManager.GetUserName(User);
             var customer = _customerRepository.GetCustomerByUsername(username);
@@ -230,15 +252,6 @@ namespace WebGoatCore.Controllers
             }
 
             return customer;
-        }
-
-        private CreditCard GetCreditCardForUser()
-        {
-            return new CreditCard()
-            {
-                Filename = Path.Combine(_resourcePath, "StoredCreditCards.xml"),
-                Username = _userManager.GetUserName(User)
-            };
         }
     }
 }
