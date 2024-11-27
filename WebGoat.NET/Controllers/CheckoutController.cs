@@ -102,27 +102,30 @@ namespace WebGoatCore.Controllers
 
             try 
             {
+                // Get cart from session
                 model.Cart = HttpContext.Session.Get<Cart>("Cart")!;
-                
                 if (model.Cart == null)
                 {
                     return BadRequest(new { error = "Cart is empty" });
                 }
 
+                // Set up currency conversion and shipping
                 const decimal dkkRate = 7.5m;
                 const decimal standardShipping = 20.0m;
                 var subtotal = Convert.ToDecimal(model.Cart.SubTotal);
                 
+                // Configure Stripe Checkout Session
                 var options = new SessionCreateOptions
                 {
                     PaymentMethodTypes = new List<string> { "card" },
                     LineItems = new List<SessionLineItemOptions>
                     {
+                        // Add cart items as first line item
                         new SessionLineItemOptions
                         {
                             PriceData = new SessionLineItemPriceDataOptions
                             {
-                                UnitAmount = (long)((subtotal * dkkRate) * 100m),
+                                UnitAmount = (long)((subtotal * dkkRate) * 100m), // Convert to øre (cents)
                                 Currency = "dkk",
                                 ProductData = new SessionLineItemPriceDataProductDataOptions
                                 {
@@ -131,11 +134,12 @@ namespace WebGoatCore.Controllers
                             },
                             Quantity = 1,
                         },
+                        // Add shipping as second line item
                         new SessionLineItemOptions
                         {
                             PriceData = new SessionLineItemPriceDataOptions
                             {
-                                UnitAmount = (long)((standardShipping * dkkRate) * 100m),
+                                UnitAmount = (long)((standardShipping * dkkRate) * 100m), // Convert to øre (cents)
                                 Currency = "dkk",
                                 ProductData = new SessionLineItemPriceDataProductDataOptions
                                 {
@@ -145,15 +149,17 @@ namespace WebGoatCore.Controllers
                             Quantity = 1,
                         }
                     },
-                    Mode = "payment",
-                    SuccessUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeSuccess?session_id={{CHECKOUT_SESSION_ID}}",
-                    CancelUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeCancel",
-                    CustomerEmail = model.Email
+                    Mode = "payment", // One-time payment
+                    SuccessUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeSuccess?session_id={{CHECKOUT_SESSION_ID}}", // Redirect after successful payment
+                    CancelUrl = $"{Request.Scheme}://{Request.Host}/Checkout/StripeCancel", // Redirect if customer cancels
+                    CustomerEmail = model.Email // Pre-fill customer email
                 };
 
+                // Create Stripe Checkout Session
                 var service = new SessionService();
                 var session = await service.CreateAsync(options);
 
+                // Return session ID to client
                 return Json(new { sessionId = session.Id });
             }
             catch (Exception e)

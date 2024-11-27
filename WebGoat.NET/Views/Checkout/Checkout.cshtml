@@ -75,24 +75,24 @@
 }
 
 @section Scripts {
+    <!-- Load Stripe.js -->
     <script src="https://js.stripe.com/v3/"></script>
     <script>
+        // Initialize Stripe with public key
         const stripe = Stripe('@ViewData["StripePublicKey"]');
         const form = document.getElementById('payment-form');
         
         form.addEventListener('submit', async function(event) {
             event.preventDefault();
             
-            // Create an object from form data
+            // Collect form data
             const formData = Array.from(new FormData(form)).reduce((acc, [key, value]) => {
                 acc[key] = value;
                 return acc;
             }, {});
             
-            // Log the data being sent
-            console.log('Sending data:', formData);
-            
             try {
+                // Send shipping details to server
                 const response = await fetch('/Checkout/Checkout', {
                     method: 'POST',
                     headers: {
@@ -116,14 +116,13 @@
                 }
                 
                 const data = await response.json();
-                console.log('Response:', data);
                 
                 if (data.error) {
                     console.error('Error:', data.error);
                     return;
                 }
                 
-                // Redirect to Stripe Checkout
+                // Redirect to Stripe Checkout page
                 const result = await stripe.redirectToCheckout({
                     sessionId: data.sessionId
                 });
