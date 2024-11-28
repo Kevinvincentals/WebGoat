@@ -3,6 +3,7 @@ using WebGoatCore.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System;
+using System.Web;
 
 namespace WebGoatCore.Controllers
 {
@@ -32,11 +33,11 @@ namespace WebGoatCore.Controllers
         [HttpPost("{entryId}")]
         public IActionResult Reply(int entryId, string contents)
         {
-            var userName = User?.Identity?.Name ?? "Anonymous";
+            var userName = HttpUtility.HtmlEncode(User?.Identity?.Name ?? "Anonymous");
             var response = new BlogResponse()
             {
                 Author = userName,
-                Contents = contents,
+                Contents = HttpUtility.HtmlEncode(contents),
                 BlogEntryId = entryId,
                 ResponseDate = DateTime.Now
             };
@@ -53,7 +54,11 @@ namespace WebGoatCore.Controllers
         [Authorize(Roles = "Admin")]
         public IActionResult Create(string title, string contents)
         {
-            var blogEntry = _blogEntryRepository.CreateBlogEntry(title, contents, User!.Identity!.Name!);
+            var blogEntry = _blogEntryRepository.CreateBlogEntry(
+                HttpUtility.HtmlEncode(title),
+                HttpUtility.HtmlEncode(contents),
+                HttpUtility.HtmlEncode(User!.Identity!.Name!)
+            );
             return View(blogEntry);
         }
 
